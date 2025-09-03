@@ -84,26 +84,35 @@ def init_database():
 
 def check_authentication():
     if not st.user.is_logged_in:
-        st.error("Please log in to access the Pick'em League")
-        st.login()
+        st.markdown("## 🏈 Fantasy Football Pick'em League")
+        st.markdown("### Please log in to access the league")
+        
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            if st.button("🔐 Log in with Google", use_container_width=True):
+                st.login()
         st.stop()
     
     # Get or create user in database
-    conn = sqlite3.connect('pickem_league.db')
-    cursor = conn.cursor()
-    
-    user_email = st.user.get('email', 'unknown@email.com')
-    username = st.user.get('name', user_email.split('@')[0])
-    
-    cursor.execute('''
-        INSERT OR IGNORE INTO users (username, email)
-        VALUES (?, ?)
-    ''', (username, user_email))
-    
-    conn.commit()
-    conn.close()
-    
-    return username
+    try:
+        conn = sqlite3.connect('pickem_league.db')
+        cursor = conn.cursor()
+        
+        user_email = st.user.get('email', 'unknown@email.com')
+        username = st.user.get('name', user_email.split('@')[0])
+        
+        cursor.execute('''
+            INSERT OR IGNORE INTO users (username, email)
+            VALUES (?, ?)
+        ''', (username, user_email))
+        
+        conn.commit()
+        conn.close()
+        
+        return username
+    except Exception as e:
+        st.error(f"Database error: {e}")
+        st.stop()
 
 def get_user_id(email):
     """Get user ID from database"""
@@ -177,6 +186,35 @@ def is_pick_submission_allowed():
     game_datetime = datetime.fromisoformat(earliest_game[3])
     
     return datetime.now() < game_datetime
+
+def get_pick_deadline():
+    """Get formatted deadline for pick submission"""
+    games = get_current_week_games()
+    if not games:
+        return None
+    
+    earliest_game = min(games, key=lambda x: x[3])  # game_date is index 3
+    game_datetime = datetime.fromisoformat(earliest_game[3])
+    
+    # Format as readable time
+    return game_datetime.strftime("%A, %B %d at %I:%M %p EST")
+
+def validate_picks_requirements(picks):
+    """Validate that picks meet the 4-pick requirement"""
+    pick_types = [pick['pick_type'] for pick in picks]
+    required_types = ['spread_favorite', 'spread_underdog', 'over', 'under']
+    
+    type_counts = {pick_type: pick_types.count(pick_type) for pick_type in required_types}
+    
+    if len(picks) != 4:
+        return False, f"Must make exactly 4 picks (you made {len(picks)})"
+    
+    for pick_type, count in type_counts.items():
+        if count != 1:
+            readable_type = pick_type.replace('_', ' ').title()
+            return False, f"Must pick exactly 1 {readable_type} (you picked {count})"
+    
+    return True, "Valid picks"
 
 def calculate_pick_results():
     """Calculate results for all picks based on final scores"""
@@ -374,8 +412,31 @@ def main():
     user_email = st.user.get('email', 'unknown@email.com')
     user_id = get_user_id(user_email)
     
-    st.sidebar.write(f"Welcome, {username}!")
-    if st.sidebar.button("Logout"):
+    st.sidebar.success(f"✅ Logged in as {username}")
+    
+    # Show league info in sidebar
+    current_week = NFLDataFetcher()._get_current_nfl_week()
+    current_season = datetime.now().year
+    st.sidebar.info(f"🏈 Week {current_week}, {current_season} Season")
+    
+    # Show user's current week status
+    user_picks = get_user_picks(user_id, current_week, current_season)
+    picks_count = len([k for k in user_picks.keys() if user_picks[k]])
+    
+    if picks_count == 4:
+        st.sidebar.success(f"✅ Picks Complete ({picks_count}/4)")
+    elif picks_count > 0:
+        st.sidebar.warning(f"⚠️ Picks Incomplete ({picks_count}/4)")
+    else:
+        st.sidebar.error("❌ No picks submitted")
+    
+    # Pick submission status
+    if is_pick_submission_allowed():
+        st.sidebar.success("🟢 Picks Open")
+    else:
+        st.sidebar.error("🔴 Picks Closed")
+    
+    if st.sidebar.button("🚪 Logout", use_container_width=True):
         st.logout()
     
     # Navigation
@@ -386,16 +447,36 @@ def main():
         
         # Check if picks are still allowed
         if not is_pick_submission_allowed():
-            st.error("Pick submission is closed. Games have started!")
+            st.error("🔒 Pick submission is closed. Games have started!")
+            st.info("You can view other players' picks in the Scoreboard tab.")
             st.stop()
         
         games = get_current_week_games()
         
         if not games:
-            st.warning("No games available for this week. Check the Admin tab to update game data.")
+            st.warning("⚠️ No games available for this week.")
+            
+            # Auto-initialize with sample data
+            if st.button("🎲 Load Sample Games for Testing"):
+                with st.spinner("Loading sample games..."):
+                    try:
+                        fetcher = NFLDataFetcher()
+                        sample_games = fetcher._get_fallback_games()
+                        fetcher.store_games_in_db(sample_games)
+                        st.success("✅ Sample games loaded! Please refresh the page.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error loading sample data: {e}")
+            
+            st.info("Or use the Admin tab to fetch real NFL data.")
             st.stop()
         
-        st.info("Select exactly 4 picks: 1 spread favorite, 1 spread underdog, 1 over, 1 under")
+        # Show deadline info
+        deadline_info = get_pick_deadline()
+        if deadline_info:
+            st.info(f"⏰ Picks close at {deadline_info}")
+        
+        st.success("📝 Select exactly 4 picks: 1 spread favorite, 1 spread underdog, 1 over, 1 under")
         
         # Get existing picks
         current_week = NFLDataFetcher()._get_current_nfl_week()
@@ -486,14 +567,26 @@ def main():
                 pick_types = [pick['pick_type'] for pick in picks]
                 required_types = ['spread_favorite', 'spread_underdog', 'over', 'under']
                 
+                # Count each pick type
+                type_counts = {pick_type: pick_types.count(pick_type) for pick_type in required_types}
+                
                 if len(picks) != 4:
-                    st.error(f"You must make exactly 4 picks. You made {len(picks)}.")
-                elif not all(pick_type in pick_types for pick_type in required_types):
-                    st.error("You must pick exactly 1 spread favorite, 1 spread underdog, 1 over, and 1 under.")
+                    st.error(f"❌ You must make exactly 4 picks. You made {len(picks)}.")
+                elif not all(count == 1 for count in type_counts.values()):
+                    st.error("❌ You must pick exactly 1 of each type:")
+                    for pick_type, count in type_counts.items():
+                        if count != 1:
+                            readable_type = pick_type.replace('_', ' ').title()
+                            st.write(f"   • {readable_type}: {count} (need 1)")
                 else:
-                    submit_picks(user_id, picks)
-                    st.success("Picks submitted successfully!")
-                    st.rerun()
+                    try:
+                        submit_picks(user_id, picks)
+                        st.success("✅ Picks submitted successfully!")
+                        st.balloons()
+                        time.sleep(2)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error submitting picks: {e}")
         
     with tab2:
         st.header("Scoreboard")
