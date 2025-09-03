@@ -83,14 +83,39 @@ def init_database():
     conn.close()
 
 def check_authentication():
-    if not st.user.is_logged_in:
+    # Initialize session state for login
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
+    if 'username' not in st.session_state:
+        st.session_state.username = ""
+    
+    if not st.session_state.logged_in:
         st.markdown("## 🏈 Fantasy Football Pick'em League")
         st.markdown("### Please log in to access the league")
         
-        col1, col2, col3 = st.columns([1, 1, 1])
-        with col2:
-            if st.button("🔐 Log in with Google", use_container_width=True):
-                st.login()
+        # Get valid usernames from secrets
+        valid_users = st.secrets.get("users", {})
+        
+        if not valid_users:
+            st.error("No users configured. Please add users to secrets.toml")
+            st.stop()
+        
+        with st.form("login_form"):
+            col1, col2, col3 = st.columns([1, 2, 1])
+            
+            with col2:
+                username = st.selectbox("Select Username", options=list(valid_users.keys()))
+                password = st.text_input("Password", type="password")
+                login_button = st.form_submit_button("🔐 Login", use_container_width=True)
+                
+                if login_button:
+                    if username in valid_users and valid_users[username] == password:
+                        st.session_state.logged_in = True
+                        st.session_state.username = username
+                        st.success("Login successful!")
+                        st.rerun()
+                    else:
+                        st.error("Invalid username or password")
         st.stop()
     
     # Get or create user in database
@@ -98,13 +123,13 @@ def check_authentication():
         conn = sqlite3.connect('pickem_league.db')
         cursor = conn.cursor()
         
-        user_email = st.user.get('email', 'unknown@email.com')
-        username = st.user.get('name', user_email.split('@')[0])
+        username = st.session_state.username
+        email = f"{username}@league.local"  # Simple email format
         
         cursor.execute('''
             INSERT OR IGNORE INTO users (username, email)
             VALUES (?, ?)
-        ''', (username, user_email))
+        ''', (username, email))
         
         conn.commit()
         conn.close()
@@ -409,7 +434,7 @@ def main():
     
     # Authentication check
     username = check_authentication()
-    user_email = st.user.get('email', 'unknown@email.com')
+    user_email = f"{username}@league.local"
     user_id = get_user_id(user_email)
     
     st.sidebar.success(f"✅ Logged in as {username}")
@@ -437,7 +462,9 @@ def main():
         st.sidebar.error("🔴 Picks Closed")
     
     if st.sidebar.button("🚪 Logout", use_container_width=True):
-        st.logout()
+        st.session_state.logged_in = False
+        st.session_state.username = ""
+        st.rerun()
     
     # Navigation
     tab1, tab2, tab3, tab4 = st.tabs(["Make Picks", "Scoreboard", "My Picks", "Admin"])

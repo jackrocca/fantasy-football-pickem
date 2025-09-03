@@ -1,62 +1,46 @@
 # Deployment Guide for Fantasy Football Pick'em League
 
-## Quick Setup (Just Add Your Credentials)
+## Super Quick Setup (2 minutes)
 
-### 1. Set Up Google OAuth (5 minutes)
+### 1. Configure Users and Passwords
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select existing one
-3. Enable the Google+ API
-4. Go to "Credentials" → "Create Credentials" → "OAuth 2.0 Client IDs"
-5. Set Application type to "Web application"
-6. Add Authorized redirect URIs:
-   - For local testing: `http://localhost:8501/oauth2callback`
-   - For Streamlit Cloud: `https://your-app-name.streamlit.app/oauth2callback`
-
-### 2. Configure Secrets
-
-Copy `.streamlit/secrets.example.toml` to `.streamlit/secrets.toml` and fill in your values:
+Copy `.streamlit/secrets.example.toml` to `.streamlit/secrets.toml` and add your league members:
 
 ```toml
-[auth]
-redirect_uri = "http://localhost:8501/oauth2callback"  # Update for production
-cookie_secret = "your-strong-random-secret-here"      # Generate a random 32+ char string
-client_id = "your-google-client-id"
-client_secret = "your-google-client-secret" 
-server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
+[users]
+john = "password123"
+sarah = "mypassword"
+mike = "league2024"
+alice = "pickem123"
+# Add more users as needed
 
 # Optional: For live betting lines (get free API key from the-odds-api.com)
 [odds_api]
 key = "your-odds-api-key"
 ```
 
-### 3. Deploy to Streamlit Cloud
+### 2. Deploy to Streamlit Cloud
 
-1. Fork this repository to your GitHub account
-2. Go to [Streamlit Cloud](https://share.streamlit.io/)
-3. Click "New app"
-4. Connect your GitHub account and select this repository
-5. Set Main file path: `app.py`
-6. In "Advanced settings" → "Secrets", paste your production secrets:
+1. Go to [Streamlit Cloud](https://share.streamlit.io/)
+2. Click "New app" 
+3. Connect your GitHub account and select the `fantasy-football-pickem` repository
+4. Set Main file path: `app.py`
+5. In "Advanced settings" → "Secrets", paste your user configuration:
 
 ```toml
-[auth]
-redirect_uri = "https://your-app-name.streamlit.app/oauth2callback"
-cookie_secret = "your-strong-random-secret"
-client_id = "your-google-client-id"
-client_secret = "your-google-client-secret"
-server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
+[users]
+john = "password123"
+sarah = "mypassword"
+mike = "league2024"
+alice = "pickem123"
 
 [odds_api]
 key = "your-odds-api-key"
 ```
 
-7. Click "Deploy"
+6. Click "Deploy"
 
-### 4. Update Google OAuth Redirect URI
-
-After deployment, update your Google OAuth client with the production redirect URI:
-`https://your-app-name.streamlit.app/oauth2callback`
+That's it! No OAuth setup required.
 
 ## Local Development
 
@@ -68,26 +52,33 @@ streamlit run app.py
 
 ## Features Available Immediately
 
-- ✅ User authentication with Google
+- ✅ Simple username/password authentication
 - ✅ Sample NFL games with betting lines
-- ✅ Pick submission with validation
+- ✅ Pick submission with validation  
 - ✅ Scoreboard and standings
 - ✅ Pick visibility controls
 - ✅ Bonus point system
 
+## How It Works
+
+1. **Login**: Users select their username and enter password
+2. **Make Picks**: Choose exactly 4 picks (1 favorite, 1 underdog, 1 over, 1 under)
+3. **Automatic Scoring**: App calculates results when you enter final scores
+4. **Bonus Points**: Perfect weeks (4/4) earn a 5th bonus point
+5. **Pick Visibility**: All picks hidden until Thursday games start
+
 ## Admin Functions
 
 Use the Admin tab to:
-- Update with real NFL game data
+- Update with real NFL game data (or use sample data)
 - Enter final scores manually
-- Calculate weekly results
-- View API usage stats
+- Calculate weekly results automatically
+- View game status
 
-## Tips
+## Super Simple Setup
 
-- The app works with sample data immediately after setup
-- Add The Odds API key for live betting lines
-- Use the "Load Sample Games" button for testing
-- All picks are automatically hidden until games start
+1. Just add usernames/passwords to secrets.toml
+2. Deploy to Streamlit Cloud
+3. Done! No OAuth complexity needed
 
-That's it! Your pick'em league is ready to go.
+Your pick'em league is ready to go!
