@@ -22,7 +22,7 @@ def show_login():
     st.subheader("Please log in to continue")
     
     with st.form("login_form"):
-        username = st.text_input("Username")
+        username = st.selectbox("Username", options=st.secrets.get("users", {}).keys())
         password = st.text_input("Password", type="password")
         submit = st.form_submit_button("Login")
         
