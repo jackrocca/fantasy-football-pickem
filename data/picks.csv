@@ -1,2 +1,3 @@
-username,week,year,favorite,underdog,over,under,perfect_powerup,line_helper,line_helper_adjustment,timestamp
-john,1,2025,Baltimore Ravens (-1.5),Dallas Cowboys (+8.5),Miami Dolphins vs Indianapolis Colts o47.5,Las Vegas Raiders vs New England Patriots u43.5,False,False,0,2025-09-03T16:35:39.941519
+username,week,year,favorite,underdog,over,under,perfect_powerup,line_helper,line_helper_adjustment,timestamp,super_spread,total_helper,total_helper_adjustment,perfect_prediction,submission_time
+john,1,2025,Baltimore Ravens (-1.5),Dallas Cowboys (+8.5),Miami Dolphins vs Indianapolis Colts o47.5,Las Vegas Raiders vs New England Patriots u43.5,False,False,0.0,2025-09-03T16:35:39.941519,,,,,
+Jack,1,2025,Philadelphia Eagles (-8.5),Los Angeles Chargers (+3.0),Arizona Cardinals vs New Orleans Saints o43.5,Carolina Panthers vs Jacksonville Jaguars u46.5,,,,2025-09-04T10:33:48.309490-07:00,False,False,0.0,False,2025-09-04T10:33:48.309490-07:00

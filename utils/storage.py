@@ -158,10 +158,24 @@ def get_current_week():
 
 
 def is_thursday_or_later():
-    """Check if it's Thursday or later in PST/PDT (picks should be locked)."""
+    """Check if TNF deadline has passed (Thursday 8:15 PM ET / 5:15 PM PT)."""
     pst_tz = ZoneInfo("America/Los_Angeles")
     pst_now = datetime.now(pst_tz)
-    return pst_now.weekday() >= 3  # Thursday = 3
+    
+    # If it's before Thursday, picks are not locked
+    if pst_now.weekday() < 3:  # Monday=0, Tuesday=1, Wednesday=2, Thursday=3
+        return False
+    
+    # If it's Friday or later, picks are definitely locked
+    if pst_now.weekday() > 3:
+        return True
+    
+    # If it's Thursday, check if it's after 5:15 PM PT (TNF kickoff)
+    if pst_now.weekday() == 3:  # Thursday
+        tnf_time = pst_now.replace(hour=17, minute=15, second=0, microsecond=0)  # 5:15 PM PT
+        return pst_now >= tnf_time
+    
+    return False
 
 
 def get_user_picks(username, week, year):

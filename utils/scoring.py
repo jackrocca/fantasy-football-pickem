@@ -307,22 +307,62 @@ def get_weekly_scoreboard(week, year):
 
 
 def get_season_standings(year):
-    """Get season-long standings."""
+    """Get season-long standings with all users from secrets included."""
+    from utils.storage import get_all_users
+    
     standings_df = load_standings()
     season_standings = standings_df[standings_df['year'] == year].copy()
     
-    if len(season_standings) == 0:
+    # Get all users from secrets
+    all_users = get_all_users()
+    
+    # Create a complete list of users with their stats
+    complete_standings = []
+    
+    for username in all_users:
+        # Check if user has standings data
+        user_data = season_standings[season_standings['username'] == username]
+        
+        if len(user_data) > 0:
+            # User has data in standings
+            user_stats = user_data.iloc[0]
+            complete_standings.append({
+                'username': username,
+                'total_points': user_stats['total_points'],
+                'perfect_weeks': user_stats['perfect_weeks'],
+                'correct_picks': user_stats.get('correct_picks', 0),
+                'weeks_played': len(load_picks()[(load_picks()['username'] == username) & (load_picks()['year'] == year)])
+            })
+        else:
+            # User has no data - create default entry
+            weeks_played = len(load_picks()[(load_picks()['username'] == username) & (load_picks()['year'] == year)])
+            complete_standings.append({
+                'username': username,
+                'total_points': 0,
+                'perfect_weeks': 0,
+                'correct_picks': 0,
+                'weeks_played': weeks_played
+            })
+    
+    # Convert to DataFrame
+    complete_df = pd.DataFrame(complete_standings)
+    
+    if len(complete_df) == 0:
         return pd.DataFrame()
     
-    # Sort by total points, then by perfect weeks, then by wins
-    season_standings = season_standings.sort_values(
-        ['total_points', 'perfect_weeks'], 
-        ascending=[False, False]
+    # Sort by total points, then by perfect weeks, then by correct picks, then by avg points
+    complete_df = complete_df.sort_values(
+        ['total_points', 'perfect_weeks', 'correct_picks'], 
+        ascending=[False, False, False]
     )
     
-    season_standings['rank'] = range(1, len(season_standings) + 1)
+    # Add rank and calculate average points per week
+    complete_df['rank'] = range(1, len(complete_df) + 1)
+    complete_df['avg_points'] = complete_df.apply(
+        lambda row: row['total_points'] / max(row['weeks_played'], 1), axis=1
+    )
     
-    return season_standings[['rank', 'username', 'total_points', 'perfect_weeks']]
+    return complete_df[['rank', 'username', 'total_points', 'perfect_weeks', 'weeks_played', 'avg_points']]
 
 
 def get_user_stats(username, year):
@@ -354,6 +394,54 @@ def get_user_stats(username, year):
     stats['average_points'] = stats['total_points'] / max(stats['weeks_played'], 1)
     
     return stats
+
+
+def get_user_weekly_history(username, year):
+    """Get complete weekly pick history for a user with results."""
+    picks_df = load_picks()
+    user_picks = picks_df[
+        (picks_df['username'] == username) & 
+        (picks_df['year'] == year)
+    ]
+    
+    if len(user_picks) == 0:
+        return []
+    
+    weekly_history = []
+    
+    for _, pick_row in user_picks.iterrows():
+        week = pick_row['week']
+        
+        # Get scoring results for this week
+        points, wins, perfect_week, pick_results = score_weekly_picks(username, week, year)
+        
+        # Get the actual pick values
+        picks_made = {}
+        for pick_type in ['favorite', 'underdog', 'over', 'under']:
+            pick_value = pick_row.get(pick_type)
+            if pd.notna(pick_value) and pick_value != "":
+                picks_made[pick_type] = {
+                    'pick': pick_value,
+                    'result': pick_results.get(pick_type, 'pending')
+                }
+        
+        weekly_history.append({
+            'week': week,
+            'points': points,
+            'wins': wins,
+            'perfect_week': perfect_week,
+            'picks': picks_made,
+            'powerups': {
+                'super_spread': pick_row.get('super_spread', False),
+                'total_helper': pick_row.get('total_helper', False),
+                'perfect_prediction': pick_row.get('perfect_prediction', False)
+            },
+            'submission_time': pick_row.get('submission_time', '')
+        })
+    
+    # Sort by week
+    weekly_history.sort(key=lambda x: x['week'])
+    return weekly_history
 
 
 def has_used_powerup(username, year, powerup_type):
