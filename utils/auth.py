@@ -9,7 +9,6 @@ def check_login():
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
         st.session_state.username = None
-        st.session_state.is_admin = False
     
     if not st.session_state.authenticated:
         show_login()
@@ -23,7 +22,7 @@ def show_login():
     st.subheader("Please log in to continue")
     
     with st.form("login_form"):
-        username = st.text_input("Username")
+        username = st.selectbox("Username", options=st.secrets.get("users", {}).keys())
         password = st.text_input("Password", type="password")
         submit = st.form_submit_button("Login")
         
@@ -31,7 +30,6 @@ def show_login():
             if authenticate_user(username, password):
                 st.session_state.authenticated = True
                 st.session_state.username = username
-                st.session_state.is_admin = is_admin(username)
                 st.success(f"Welcome, {username}!")
                 st.rerun()
             else:
@@ -48,25 +46,12 @@ def authenticate_user(username, password):
         return False
 
 
-def is_admin(username):
-    """Check if user has admin privileges."""
-    try:
-        admins = st.secrets.get("admins", {})
-        return admins.get(username, False)
-    except Exception:
-        return False
 
 
 def logout():
     """Log out the current user."""
     st.session_state.authenticated = False
     st.session_state.username = None
-    st.session_state.is_admin = False
     st.rerun()
 
 
-def require_admin():
-    """Decorator/helper to require admin access."""
-    if not st.session_state.get("is_admin", False):
-        st.error("Access denied. Admin privileges required.")
-        st.stop()

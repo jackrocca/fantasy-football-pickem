@@ -1,0 +1,66 @@
+name: Automated NFL Scores Collection
+
+on:
+  schedule:
+    # Thursday after Thursday Night Football (11:30 PM PST = 07:30 UTC Friday)
+    - cron: '30 7 * * 5'
+    
+    # Sunday every 2 hours between 10 AM PST and 10 PM PST (18:00-06:00 UTC Monday)
+    # 10 AM PST = 18:00 UTC, 12 PM PST = 20:00 UTC, etc.
+    - cron: '0 18 * * 0'  # 10 AM PST Sunday
+    - cron: '0 20 * * 0'  # 12 PM PST Sunday  
+    - cron: '0 22 * * 0'  # 2 PM PST Sunday
+    - cron: '0 0 * * 1'   # 4 PM PST Sunday (Monday 00:00 UTC)
+    - cron: '0 2 * * 1'   # 6 PM PST Sunday (Monday 02:00 UTC)
+    - cron: '0 4 * * 1'   # 8 PM PST Sunday (Monday 04:00 UTC)
+    - cron: '0 6 * * 1'   # 10 PM PST Sunday (Monday 06:00 UTC)
+    
+    # Monday after Monday Night Football (11:30 PM PST = 07:30 UTC Tuesday)
+    - cron: '30 7 * * 2'
+  
+  # Allow manual triggering for testing
+  workflow_dispatch:
+
+jobs:
+  collect-scores:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+          
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Create Google Cloud credentials file
+      run: |
+        echo '${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}' > service_account.json
+        
+    - name: Set environment variables
+      run: |
+        echo "GOOGLE_APPLICATION_CREDENTIALS=service_account.json" >> $GITHUB_ENV
+        echo "ODDS_API_KEY=${{ secrets.ODDS_API_KEY }}" >> $GITHUB_ENV
+        
+    - name: Run NFL scores collection
+      run: |
+        python github_actions_scores_collector.py
+        
+    - name: Clean up credentials
+      if: always()
+      run: |
+        rm -f service_account.json
