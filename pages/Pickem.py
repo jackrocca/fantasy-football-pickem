@@ -10,9 +10,11 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utils'))
 
 from utils.auth import check_login
-from utils.storage import (get_current_week, is_thursday_or_later, 
-                          save_picks, get_user_picks)
-from utils.odds import get_picks_options, load_cached_odds, get_formatted_games_display
+from utils.storage import (get_current_week, is_thursday_or_later)
+from utils.odds import (get_locked_lines_for_week, find_wednesday_9am_snapshot,
+                       save_picks_to_firestore, get_user_picks_from_firestore,
+                       create_picks_data_from_form, filter_games_by_week, is_week_complete,
+                       get_scores_for_games)
 from utils.scoring import has_used_powerup
 
 # Page config
@@ -23,84 +25,125 @@ st.set_page_config(
 )
 
 def get_available_weeks():
-    """Get list of available weeks for tabs."""
-    import pandas as pd
-    import os
-    
-    # Get current week as starting point
+    """Get list of available weeks for tabs - only active week and completed weeks."""
     current_week, current_year = get_current_week()
-    
-    # Check what weeks have cached data
-    cache_file = os.path.join(os.path.dirname(__file__), '..', 'data', 'odds_cache.csv')
     weeks_with_data = []
     
-    if os.path.exists(cache_file):
-        try:
-            df = pd.read_csv(cache_file)
-            if not df.empty:
-                # Get unique week/year combinations
-                unique_weeks = df[['week', 'year']].drop_duplicates()
-                weeks_with_data = [(int(row['week']), int(row['year'])) for _, row in unique_weeks.iterrows()]
-        except:
-            pass
+    # If current week is complete, add next week as first tab (if it exists)
+    if is_week_complete(current_week, current_year):
+        next_week = current_week + 1
+        if next_week <= 18:  # NFL regular season is 18 weeks
+            weeks_with_data.append((next_week, current_year))
+        elif current_year == 2025:  # Handle year transition to 2026
+            weeks_with_data.append((1, 2026))
     
-    # Always include current week
-    if (current_week, current_year) not in weeks_with_data:
-        weeks_with_data.append((current_week, current_year))
+    # Add current week (will be first if not complete, second if complete)
+    weeks_with_data.append((current_week, current_year))
     
-    # Sort by year and week (most recent first)
-    weeks_with_data.sort(key=lambda x: (x[1], x[0]), reverse=True)
+    # Add all previous completed weeks in reverse order (most recent first)
+    for week_num in range(current_week - 1, 0, -1):
+        weeks_with_data.append((week_num, current_year))
     
     return weeks_with_data
 
 
 def show_week_content(week, year):
     """Display content for a specific week."""
-    # Show cache status
-    cached_odds = load_cached_odds(week, year)
+    # Get the Wednesday 9AM snapshot for this week
+    snapshot = find_wednesday_9am_snapshot(week, year)
     
     # Display this week's games
     st.header("🏈 Games")
     
-    try:
-        # For current week, use the live function, for others use cached data
-        current_week, current_year = get_current_week()
-        if week == current_week and year == current_year:
-            games_display = get_formatted_games_display()
-        else:
-            # For past weeks, we'd need to create a function to format cached data
-            # For now, just show that data exists
-            games_display = []
+    if snapshot and snapshot.get('GAMES'):
+        # Filter games to only show games from this specific week
+        all_games = snapshot['GAMES']
+        week_games = filter_games_by_week(all_games, week, year)
         
-        if games_display:
+        # Get scores for games in this week
+        game_ids = [game.get('GAME_ID') for game in week_games if game.get('GAME_ID')]
+        game_scores = get_scores_for_games(game_ids)
+        
+        # Filter games with DraftKings odds and format for display
+        display_games = []
+        for game in week_games:
+            if game.get('BOOKMAKER') == 'DraftKings':
+                home_team = game.get('HOME_TEAM', '')
+                away_team = game.get('AWAY_TEAM', '')
+                spread_home = game.get('SPREAD_POINTS_HOME', 0)
+                over_points = game.get('OVER_POINTS', 0)
+                game_id = game.get('GAME_ID', '')
+                
+                # Check if game has scores (is completed)
+                game_score = game_scores.get(game_id, {})
+                is_completed = game_score.get('completed', False)
+                
+                if spread_home < 0:
+                    formatted_text = f"{away_team} @ {home_team} ({spread_home})"
+                else:
+                    formatted_text = f"{away_team} @ {home_team} (+{spread_home})"
+                
+                display_games.append({
+                    'formatted_text': formatted_text,
+                    'total_line': over_points,
+                    'home_team': home_team,
+                    'away_team': away_team,
+                    'game_id': game_id,
+                    'is_completed': is_completed,
+                    'home_score': game_score.get('home_score', 0) if is_completed else None,
+                    'away_score': game_score.get('away_score', 0) if is_completed else None,
+                    'total_points': game_score.get('total_points', 0) if is_completed else None
+                })
+        
+        if display_games:
             # Create a nice display with columns for better layout
             cols_per_row = 2
-            for i in range(0, len(games_display), cols_per_row):
+            for i in range(0, len(display_games), cols_per_row):
                 cols = st.columns(cols_per_row)
                 for j, col in enumerate(cols):
-                    if i + j < len(games_display):
-                        game = games_display[i + j]
+                    if i + j < len(display_games):
+                        game = display_games[i + j]
                         with col:
                             # Use a card-like container
                             with st.container():
-                                st.markdown(f"""
-                                <div style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin: 5px 0; background-color: #f9f9f9;">
-                                    <h4 style="margin: 0; text-align: center; color: #1f77b4;">{game['formatted_text']}</h4>
-                                    <p style="margin: 2px 0; text-align: center; font-size: 1.1em; color: #666;">
-                                        Over / Under {game['total_line']}
-                                    </p>
-                                </div>
-                                """, unsafe_allow_html=True)
+                                # Different styling for completed vs active games
+                                if game.get('is_completed', False):
+                                    # Completed game with scores
+                                    bg_color = "#e8f5e8"  # Light green
+                                    border_color = "#4caf50"  # Green
+                                    text_color = "#2e7d32"  # Dark green
+                                    
+                                    score_text = f"{game['away_team']} {game['away_score']} - {game['home_score']} {game['home_team']}"
+                                    total_text = f"Final Total: {game['total_points']}"
+                                    
+                                    st.markdown(f"""
+                                    <div style="border: 2px solid {border_color}; border-radius: 8px; padding: 15px; margin: 5px 0; background-color: {bg_color};">
+                                        <h4 style="margin: 0; text-align: center; color: {text_color};">🏁 FINAL</h4>
+                                        <h3 style="margin: 5px 0; text-align: center; color: {text_color}; font-weight: bold;">{score_text}</h3>
+                                        <p style="margin: 2px 0; text-align: center; font-size: 1.1em; color: {text_color};">
+                                            {total_text}
+                                        </p>
+                                        <p style="margin: 2px 0; text-align: center; font-size: 0.9em; color: #666;">
+                                            Line was: {game['formatted_text']} o/u{game['total_line']}
+                                        </p>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                                else:
+                                    # Active game (can still be picked)
+                                    st.markdown(f"""
+                                    <div style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin: 5px 0; background-color: #f9f9f9;">
+                                        <h4 style="margin: 0; text-align: center; color: #1f77b4;">{game['formatted_text']}</h4>
+                                        <p style="margin: 2px 0; text-align: center; font-size: 1.1em; color: #666;">
+                                            Over / Under {game['total_line']}
+                                        </p>
+                                    </div>
+                                    """, unsafe_allow_html=True)
             
             st.markdown("---")  # Add separator between games and picks
         else:
-            if not cached_odds:
-                st.warning("No games data available for this week.")
-            else:
-                st.info("Games data is cached but display formatting is only available for current week.")
-            
-    except Exception as e:
-        st.error(f"Error loading games display: {e}")
+            st.warning("No DraftKings games found in snapshot.")
+    else:
+        st.warning(f"No locked lines available for Week {week}, {year}. Snapshots are generated from Wednesday 9AM PST data.")
 
 
 def show_picks_form():
@@ -113,8 +156,15 @@ def show_picks_form():
     # Get available weeks for tabs
     available_weeks = get_available_weeks()
     
-    # Create tab labels (most recent first)
-    tab_labels = [f"Week {week}" for week, year in available_weeks]
+    # Create tab labels with year when different from current year
+    current_year = get_current_week()[1]
+    tab_labels = []
+    for week, year in available_weeks:
+        if year == current_year:
+            tab_labels.append(f"Week {week}")
+        else:
+            tab_labels.append(f"Week {week} ({year})")
+    
     
     # Create tabs
     tabs = st.tabs(tab_labels)
@@ -122,7 +172,6 @@ def show_picks_form():
     # Display content for each tab
     for i, (week, year) in enumerate(available_weeks):
         with tabs[i]:
-            st.subheader(f"Week {week}, {year}")
             
             # Show week content
             show_week_content(week, year)
@@ -136,15 +185,22 @@ def show_picks_form():
                     st.info("Late submissions are automatically deducted 1 point and forfeit scoring specials eligibility.")
                     st.info("You can still submit picks below, but no changes can be made once submitted.")
                 
-                # Get existing picks
-                existing_picks = get_user_picks(st.session_state.username, current_week, current_year)
+                # Get existing picks from Firestore
+                existing_picks = get_user_picks_from_firestore(st.session_state.username, current_week, current_year)
                 
-                # Get available options
-                picks_options = get_picks_options()
+                # Get locked lines for this week
+                picks_options = get_locked_lines_for_week(current_week, current_year)
                 
-                if picks_options["favorites"][0] == "No games available":
-                    st.error("No games available for picks this week.")
+                if picks_options["favorites"][0] in ["No locked lines available", "Error loading lines"]:
+                    st.error("No locked lines available for picks this week. Lines are locked based on Wednesday 9AM PST snapshots.")
+                    st.info(picks_options.get("snapshot_info", "Snapshot information not available"))
                     return
+                
+                # Snapshot info available but not displayed to keep UI clean
+                
+                # Get snapshot games for parsing picks
+                snapshot = find_wednesday_9am_snapshot(current_week, current_year)
+                snapshot_games = snapshot.get('GAMES', []) if snapshot else []
                 
                 # Show current picks if they exist
                 if existing_picks:
@@ -155,54 +211,80 @@ def show_picks_form():
                         
                         with col1:
                             st.write("**Spread Picks:**")
-                            st.write(f"Favorite: {existing_picks.get('favorite', 'None')}")
-                            st.write(f"Underdog: {existing_picks.get('underdog', 'None')}")
+                            st.write(f"Favorite: {existing_picks.get('FAVORITE_TEAM', 'None')} ({existing_picks.get('FAVORITE_SPREAD', 'N/A')})")
+                            st.write(f"Underdog: {existing_picks.get('UNDERDOG_TEAM', 'None')} ({existing_picks.get('UNDERDOG_SPREAD', 'N/A')})")
                         
                         with col2:
                             st.write("**Total Picks:**")
-                            st.write(f"Over: {existing_picks.get('over', 'None')}")
-                            st.write(f"Under: {existing_picks.get('under', 'None')}")
+                            st.write(f"Over: {existing_picks.get('OVER_POINTS', 'None')} points")
+                            st.write(f"Under: {existing_picks.get('UNDER_POINTS', 'None')} points")
                         
                         # Display active scoring specials
                         specials = []
-                        if existing_picks.get('super_spread', False):
-                            specials.append("🎯 **Super Spread ACTIVE** - Double coverage for 2.5 points")
+                        if existing_picks.get('SUPER_SPREAD', False):
+                            specials.append("🎯 **Super Spread ACTIVE**")
                         
-                        if existing_picks.get('total_helper', False):
-                            adj = existing_picks.get('total_helper_adjustment', 0)
-                            specials.append(f"📐 **Total Helper Used** - Line adjustment: {adj:+} points")
+                        if existing_picks.get('TOTAL_HELPER'):
+                            helper_type = existing_picks.get('TOTAL_HELPER', '')
+                            adj = existing_picks.get('TOTAL_HELPER_ADJUSTMENT', 0)
+                            specials.append(f"📐 **Total Helper Used** - {helper_type} with {adj:+} points adjustment")
                         
-                        if existing_picks.get('perfect_prediction', False):
+                        if existing_picks.get('PERFECT_PREDICTION', False):
                             specials.append("🔮 **Perfect Prediction ACTIVE** - Perfect week = 8 points")
                         
                         if specials:
                             st.write("**Active Scoring Specials:**")
                             for special in specials:
                                 st.write(special)
+                        
+                        # Show submission timestamp
+                        if existing_picks.get('SUBMISSION_TIMESTAMP'):
+                            st.write(f"**Submitted:** {existing_picks['SUBMISSION_TIMESTAMP'][:19]}")
                 
                 # Picks form
                 with st.form("picks_form"):
                     st.header("Make Your Picks")
                     st.write("Select exactly **4 picks from 4 different games**: 1 Favorite, 1 Underdog, 1 Over, 1 Under")
-                    st.write("⚠️ **NEW RULES**: Each pick worth 1 point, pushes worth 0.5 points, perfect week (4/4) = 5 points total")
-                    
+
                     col1, col2 = st.columns(2)
                     
                     with col1:
                         st.subheader("Spread Picks")
                         
+                        # Find existing favorite pick for default selection
+                        fav_default_index = 0
+                        if existing_picks and existing_picks.get('FAVORITE_TEAM'):
+                            fav_team = existing_picks.get('FAVORITE_TEAM')
+                            fav_spread = existing_picks.get('FAVORITE_SPREAD', 0)
+                            fav_pick_str = f"{fav_team} ({fav_spread})"
+                            try:
+                                fav_default_index = picks_options["favorites"].index(fav_pick_str) + 1
+                            except ValueError:
+                                fav_default_index = 0
+                        
                         favorite_pick = st.selectbox(
                             "Select a Favorite (team getting points)",
                             [""] + picks_options["favorites"],
-                            index=0 if not existing_picks else picks_options["favorites"].index(existing_picks.get('favorite', '')) + 1,
+                            index=fav_default_index,
                             disabled=picks_locked,
                             help="Pick a team you think will cover the spread as the favorite"
                         )
                         
+                        # Find existing underdog pick for default selection
+                        und_default_index = 0
+                        if existing_picks and existing_picks.get('UNDERDOG_TEAM'):
+                            und_team = existing_picks.get('UNDERDOG_TEAM')
+                            und_spread = existing_picks.get('UNDERDOG_SPREAD', 0)
+                            und_pick_str = f"{und_team} (+{abs(und_spread)})"
+                            try:
+                                und_default_index = picks_options["underdogs"].index(und_pick_str) + 1
+                            except ValueError:
+                                und_default_index = 0
+                        
                         underdog_pick = st.selectbox(
                             "Select an Underdog (team giving points)",
                             [""] + picks_options["underdogs"],
-                            index=0 if not existing_picks else picks_options["underdogs"].index(existing_picks.get('underdog', '')) + 1,
+                            index=und_default_index,
                             disabled=picks_locked,
                             help="Pick a team you think will cover the spread as the underdog"
                         )
@@ -210,18 +292,38 @@ def show_picks_form():
                     with col2:
                         st.subheader("Total Points Picks")
                         
+                        # Find existing over pick for default selection
+                        over_default_index = 0
+                        if existing_picks and existing_picks.get('OVER_POINTS'):
+                            over_points = existing_picks.get('OVER_POINTS', 0)
+                            # Need to find the matching over pick string
+                            for i, over_option in enumerate(picks_options["overs"]):
+                                if f"o{over_points}" in over_option:
+                                    over_default_index = i + 1
+                                    break
+                        
                         over_pick = st.selectbox(
                             "Select an Over",
                             [""] + picks_options["overs"],
-                            index=0 if not existing_picks else picks_options["overs"].index(existing_picks.get('over', '')) + 1,
+                            index=over_default_index,
                             disabled=picks_locked,
                             help="Pick a game you think will go OVER the total points line"
                         )
                         
+                        # Find existing under pick for default selection
+                        under_default_index = 0
+                        if existing_picks and existing_picks.get('UNDER_POINTS'):
+                            under_points = existing_picks.get('UNDER_POINTS', 0)
+                            # Need to find the matching under pick string
+                            for i, under_option in enumerate(picks_options["unders"]):
+                                if f"u{under_points}" in under_option:
+                                    under_default_index = i + 1
+                                    break
+                        
                         under_pick = st.selectbox(
                             "Select an Under",
                             [""] + picks_options["unders"],
-                            index=0 if not existing_picks else picks_options["unders"].index(existing_picks.get('under', '')) + 1,
+                            index=under_default_index,
                             disabled=picks_locked,
                             help="Pick a game you think will go UNDER the total points line"
                         )
@@ -233,35 +335,60 @@ def show_picks_form():
                     
                     with col1:
                         super_spread_used = has_used_powerup(st.session_state.username, current_year, "super_spread")
-                        # Check if favorite pick is eligible for super spread (≥-5)
-                        super_spread_eligible = False
+                        
+                        # Check if favorite pick is eligible for super spread (≤-5)
+                        super_spread_eligible = True  # Default to eligible
                         if favorite_pick and " (" in favorite_pick:
                             try:
                                 spread_str = favorite_pick.split("(")[1].replace(")", "")
                                 spread_value = float(spread_str)
                                 super_spread_eligible = spread_value <= -5.0
                             except:
-                                pass
+                                super_spread_eligible = False
+                        elif favorite_pick:
+                            super_spread_eligible = False  # No spread info found
                         
-                        super_spread = st.checkbox(
+                        # Get existing super spread choice
+                        existing_super_spread = existing_picks.get('SUPER_SPREAD', False) if existing_picks else False
+                        super_spread_options = ["No", "Yes"]
+                        default_index = 1 if existing_super_spread else 0
+                        
+                        super_spread_choice = st.selectbox(
                             "Super Spread",
-                            value=existing_picks.get('super_spread', False) if existing_picks else False,
+                            super_spread_options,
+                            index=default_index,
                             disabled=super_spread_used or not super_spread_eligible or (picks_locked and not existing_picks),
                             help="Available if your favorite is at least -5. Team needs to cover double (e.g., -10 for -5 line) to earn 2.5 points. Push = 1 point. Miss = 0 points. NOT available for late submissions."
                         )
                         
+                        super_spread = super_spread_choice == "Yes"
+                        
                         if super_spread_used:
                             st.caption("✅ Already used this season")
                         elif not super_spread_eligible and favorite_pick:
-                            st.caption("⚠️ Favorite must be ≥-5 to use")
+                            st.caption("⚠️ Favorite must be -5.0 or bigger to use")
+                        elif favorite_pick and super_spread_eligible:
+                            spread_str = favorite_pick.split("(")[1].replace(")", "")
+                            st.caption(f"✅ Eligible: {spread_str} qualifies")
                     
                     with col2:
                         total_helper_used = has_used_powerup(st.session_state.username, current_year, "total_helper")
-                        total_helper = st.checkbox(
+                        
+                        # Get existing total helper choice
+                        existing_helper_choice = existing_picks.get('TOTAL_HELPER', '') if existing_picks else ''
+                        helper_options = ["None", "Over", "Under"]
+                        default_index = 0
+                        if existing_helper_choice == 'OVER':
+                            default_index = 1
+                        elif existing_helper_choice == 'UNDER':
+                            default_index = 2
+                        
+                        total_helper_choice = st.selectbox(
                             "Total Helper",
-                            value=existing_picks.get('total_helper', False) if existing_picks else False,
+                            helper_options,
+                            index=default_index,
                             disabled=total_helper_used or (picks_locked and not existing_picks),
-                            help="Raise or lower the total of an over or under pick. No extra points allotted. NOT available for late submissions."
+                            help="Apply 5-point advantage to your Over or Under pick. No extra points allotted. NOT available for late submissions."
                         )
                         
                         if total_helper_used:
@@ -269,28 +396,31 @@ def show_picks_form():
                     
                     with col3:
                         perfect_prediction_used = has_used_powerup(st.session_state.username, current_year, "perfect_prediction")
-                        perfect_prediction = st.checkbox(
+                        
+                        # Get existing perfect prediction choice
+                        existing_perfect_prediction = existing_picks.get('PERFECT_PREDICTION', False) if existing_picks else False
+                        perfect_prediction_options = ["No", "Yes"]
+                        default_index = 1 if existing_perfect_prediction else 0
+                        
+                        perfect_prediction_choice = st.selectbox(
                             "Perfect Prediction",
-                            value=existing_picks.get('perfect_prediction', False) if existing_picks else False,
+                            perfect_prediction_options,
+                            index=default_index,
                             disabled=perfect_prediction_used or (picks_locked and not existing_picks),
                             help="A 4/4 week will result in 8 points (instead of normal 5). NOT available for late submissions."
                         )
                         
+                        perfect_prediction = perfect_prediction_choice == "Yes"
+                        
                         if perfect_prediction_used:
                             st.caption("✅ Already used this season")
                     
-                    # Total helper adjustment
+                    # Calculate total helper adjustment based on selection
                     total_helper_adjustment = 0
-                    if total_helper and not total_helper_used:
-                        total_helper_adjustment = st.slider(
-                            "Total Helper Adjustment",
-                            min_value=-5,
-                            max_value=5,
-                            value=existing_picks.get('total_helper_adjustment', 0) if existing_picks else 0,
-                            step=1,
-                            disabled=picks_locked,
-                            help="Adjust the Over/Under line by this amount"
-                        )
+                    if total_helper_choice == "Over":
+                        total_helper_adjustment = -5  # Over line goes DOWN (easier to hit)
+                    elif total_helper_choice == "Under":
+                        total_helper_adjustment = 5   # Under line goes UP (easier to hit)
                     
                     # Submit button
                     if picks_locked:
@@ -314,6 +444,28 @@ def show_picks_form():
                             errors.append("Must select an Over")
                         if not under_pick:
                             errors.append("Must select an Under")
+                        
+                        # Validate Super Spread eligibility
+                        if super_spread:
+                            if not favorite_pick:
+                                errors.append("Must select a Favorite to use Super Spread")
+                            elif " (" in favorite_pick:
+                                try:
+                                    spread_str = favorite_pick.split("(")[1].replace(")", "")
+                                    spread_value = float(spread_str)
+                                    if spread_value > -5.0:
+                                        errors.append(f"Super Spread requires favorite spread of -5.0 or bigger. Your pick ({spread_str}) is not eligible.")
+                                except:
+                                    errors.append("Invalid favorite pick format for Super Spread validation")
+                            else:
+                                errors.append("Cannot determine favorite spread for Super Spread validation")
+                        
+                        # Validate Total Helper selection
+                        if total_helper_choice in ["Over", "Under"]:
+                            if total_helper_choice == "Over" and not over_pick:
+                                errors.append("Must select an Over pick to use Total Helper on Over")
+                            elif total_helper_choice == "Under" and not under_pick:
+                                errors.append("Must select an Under pick to use Total Helper on Under")
                         
                         # Check for conflicts (same game picked multiple times)
                         # Extract game identifiers from each pick
@@ -383,37 +535,29 @@ def show_picks_form():
                                 st.error(error)
                         else:
                             try:
-                                save_picks(
+                                # Create picks data using the new system
+                                picks_data = create_picks_data_from_form(
+                                    favorite_pick, underdog_pick, over_pick, under_pick,
+                                    super_spread, total_helper_choice, total_helper_adjustment,
+                                    perfect_prediction, snapshot_games
+                                )
+                                
+                                # Save to Firestore
+                                doc_id = save_picks_to_firestore(
                                     username=st.session_state.username,
                                     week=current_week,
                                     year=current_year,
-                                    favorite=favorite_pick,
-                                    underdog=underdog_pick,
-                                    over=over_pick,
-                                    under=under_pick,
-                                    super_spread=super_spread,
-                                    total_helper=total_helper,
-                                    total_helper_adjustment=total_helper_adjustment,
-                                    perfect_prediction=perfect_prediction
+                                    picks_data=picks_data
                                 )
-                                st.success("✅ Picks saved successfully!")
-                                st.rerun()
+                                
+                                if doc_id:
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to save picks. Please try again.")
+                                    
                             except Exception as e:
                                 st.error(f"Error saving picks: {e}")
     
-    # Navigation (outside tabs)
-    st.markdown("---")
-    st.header("Navigation")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("🏠 Back to Home", use_container_width=True):
-            st.switch_page("Home.py")
-    
-    with col2:
-        if st.session_state.is_admin:
-            if st.button("⚙️ Admin Panel", use_container_width=True):
-                st.switch_page("pages/Admin.py")
 
 
 def main():

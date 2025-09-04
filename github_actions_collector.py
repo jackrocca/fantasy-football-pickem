@@ -87,6 +87,25 @@ def collect_nfl_odds():
         logger.info(f"✅ Successfully stored API data with document ID: {doc_id}")
         logger.info(f"📊 Stored {len(odds_data)} NFL games")
         
+        # Create game snapshot from the raw data
+        logger.info("Creating game snapshot from raw data...")
+        try:
+            # Import the snapshot creation function
+            import sys
+            import os
+            sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+            
+            from utils.odds import create_game_snapshot
+            
+            snapshot_doc_id = create_game_snapshot(doc_id, odds_data)
+            if snapshot_doc_id:
+                logger.info(f"✅ Created game snapshot with document ID: {snapshot_doc_id}")
+            else:
+                logger.warning("⚠️ Failed to create game snapshot")
+                
+        except Exception as e:
+            logger.error(f"❌ Error creating game snapshot: {str(e)}")
+        
         return True, doc_id, len(odds_data)
         
     except requests.RequestException as e:
