@@ -2,7 +2,6 @@
 Fantasy Football Pick'em League - Weekly Picks Page
 Interface for submitting weekly picks with powerups.
 """
-# Force redeploy to fix import issue
 import streamlit as st
 import sys
 import os

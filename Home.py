@@ -320,7 +320,7 @@ def show_nfl_style_leaderboard(standings_df, current_year):
         with button_col:
             # Add some spacing to align with card
             st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
-            if st.button("👁️ Details", key=f"details_{username}", use_container_width=True, help=f"View {username}'s pick history"):
+            if st.button("Pick History ", key=f"details_{username}", use_container_width=True, help=f"View {username}'s pick history"):
                 show_user_history_modal(username, current_year)
         
         # Add spacing between cards
