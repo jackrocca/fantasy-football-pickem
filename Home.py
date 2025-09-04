@@ -32,7 +32,7 @@ def show_dashboard():
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
         st.title("🏈 Fantasy Football Pick'em League")
-        st.subheader(f"Week {current_week}, {current_year}")
+        st.subheader(f"Currently Week {current_week}, {current_year}")
     
     with col2:
         st.metric("Current User", st.session_state.username)

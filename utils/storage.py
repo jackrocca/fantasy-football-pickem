@@ -25,7 +25,8 @@ def load_picks():
     """Load user picks from CSV."""
     filepath = ensure_csv_exists("picks.csv", [
         "username", "week", "year", "favorite", "underdog", "over", "under",
-        "perfect_powerup", "line_helper", "line_helper_adjustment", "timestamp"
+        "super_spread", "total_helper", "total_helper_adjustment", "perfect_prediction", 
+        "submission_time", "timestamp"
     ])
     try:
         return pd.read_csv(filepath)
@@ -35,13 +36,17 @@ def load_picks():
 
 
 def save_picks(username, week, year, favorite, underdog, over, under, 
-               perfect_powerup=False, line_helper=False, line_helper_adjustment=0):
+               super_spread=False, total_helper=False, total_helper_adjustment=0, perfect_prediction=False):
     """Save user picks to CSV."""
     filepath = get_data_path("picks.csv")
     df = load_picks()
     
     # Remove existing picks for this user/week/year
     df = df[~((df['username'] == username) & (df['week'] == week) & (df['year'] == year))]
+    
+    # Determine submission time for deadline checking
+    current_time = datetime.now()
+    submission_time = current_time.isoformat()
     
     # Add new pick
     new_pick = pd.DataFrame([{
@@ -52,10 +57,12 @@ def save_picks(username, week, year, favorite, underdog, over, under,
         'underdog': underdog,
         'over': over,
         'under': under,
-        'perfect_powerup': perfect_powerup,
-        'line_helper': line_helper,
-        'line_helper_adjustment': line_helper_adjustment,
-        'timestamp': datetime.now().isoformat()
+        'super_spread': super_spread,
+        'total_helper': total_helper,
+        'total_helper_adjustment': total_helper_adjustment,
+        'perfect_prediction': perfect_prediction,
+        'submission_time': submission_time,
+        'timestamp': submission_time
     }])
     
     df = pd.concat([df, new_pick], ignore_index=True)

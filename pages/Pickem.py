@@ -132,8 +132,9 @@ def show_picks_form():
                 # Check if picks are locked
                 picks_locked = is_thursday_or_later()
                 if picks_locked:
-                    st.warning("⚠️ Picks are locked! Thursday has passed.")
-                    st.info("You can view your picks below, but no changes can be made.")
+                    st.warning("⚠️ Picks deadline has passed! Thursday Night Football has started.")
+                    st.info("Late submissions are automatically deducted 1 point and forfeit scoring specials eligibility.")
+                    st.info("You can still submit picks below, but no changes can be made once submitted.")
                 
                 # Get existing picks
                 existing_picks = get_user_picks(st.session_state.username, current_week, current_year)
@@ -162,17 +163,28 @@ def show_picks_form():
                             st.write(f"Over: {existing_picks.get('over', 'None')}")
                             st.write(f"Under: {existing_picks.get('under', 'None')}")
                         
-                        if existing_picks.get('perfect_powerup', False):
-                            st.write("🚀 **Perfect Powerup ACTIVE** - Perfect week = 8 points, else 0 points")
+                        # Display active scoring specials
+                        specials = []
+                        if existing_picks.get('super_spread', False):
+                            specials.append("🎯 **Super Spread ACTIVE** - Double coverage for 2.5 points")
                         
-                        if existing_picks.get('line_helper', False):
-                            adj = existing_picks.get('line_helper_adjustment', 0)
-                            st.write(f"🎯 **Line Helper Used** - Adjustment: {adj:+} points")
+                        if existing_picks.get('total_helper', False):
+                            adj = existing_picks.get('total_helper_adjustment', 0)
+                            specials.append(f"📐 **Total Helper Used** - Line adjustment: {adj:+} points")
+                        
+                        if existing_picks.get('perfect_prediction', False):
+                            specials.append("🔮 **Perfect Prediction ACTIVE** - Perfect week = 8 points")
+                        
+                        if specials:
+                            st.write("**Active Scoring Specials:**")
+                            for special in specials:
+                                st.write(special)
                 
                 # Picks form
                 with st.form("picks_form"):
                     st.header("Make Your Picks")
-                    st.write("Select exactly **4 picks**: 1 Favorite, 1 Underdog, 1 Over, 1 Under")
+                    st.write("Select exactly **4 picks from 4 different games**: 1 Favorite, 1 Underdog, 1 Over, 1 Under")
+                    st.write("⚠️ **NEW RULES**: Each pick worth 1 point, pushes worth 0.5 points, perfect week (4/4) = 5 points total")
                     
                     col1, col2 = st.columns(2)
                     
@@ -214,53 +226,79 @@ def show_picks_form():
                             help="Pick a game you think will go UNDER the total points line"
                         )
                     
-                    # Powerups section
-                    st.header("🚀 Powerups (One-time per season)")
+                    # Scoring Specials section
+                    st.header("🚀 Scoring Specials (One-time per season)")
                     
-                    col1, col2 = st.columns(2)
+                    col1, col2, col3 = st.columns(3)
                     
                     with col1:
-                        perfect_powerup_used = has_used_powerup(st.session_state.username, current_year, "perfect_powerup")
-                        perfect_powerup = st.checkbox(
-                            "Perfect Powerup",
-                            value=existing_picks.get('perfect_powerup', False) if existing_picks else False,
-                            disabled=picks_locked or perfect_powerup_used,
-                            help="If you get all 4 picks correct = 8 points. If you miss any = 0 points."
+                        super_spread_used = has_used_powerup(st.session_state.username, current_year, "super_spread")
+                        # Check if favorite pick is eligible for super spread (≥-5)
+                        super_spread_eligible = False
+                        if favorite_pick and " (" in favorite_pick:
+                            try:
+                                spread_str = favorite_pick.split("(")[1].replace(")", "")
+                                spread_value = float(spread_str)
+                                super_spread_eligible = spread_value <= -5.0
+                            except:
+                                pass
+                        
+                        super_spread = st.checkbox(
+                            "Super Spread",
+                            value=existing_picks.get('super_spread', False) if existing_picks else False,
+                            disabled=super_spread_used or not super_spread_eligible or (picks_locked and not existing_picks),
+                            help="Available if your favorite is at least -5. Team needs to cover double (e.g., -10 for -5 line) to earn 2.5 points. Push = 1 point. Miss = 0 points. NOT available for late submissions."
                         )
                         
-                        if perfect_powerup_used:
+                        if super_spread_used:
                             st.caption("✅ Already used this season")
+                        elif not super_spread_eligible and favorite_pick:
+                            st.caption("⚠️ Favorite must be ≥-5 to use")
                     
                     with col2:
-                        line_helper_used = has_used_powerup(st.session_state.username, current_year, "line_helper")
-                        line_helper = st.checkbox(
-                            "Line Helper",
-                            value=existing_picks.get('line_helper', False) if existing_picks else False,
-                            disabled=picks_locked or line_helper_used,
-                            help="Adjust any Over/Under line by ±5 points"
+                        total_helper_used = has_used_powerup(st.session_state.username, current_year, "total_helper")
+                        total_helper = st.checkbox(
+                            "Total Helper",
+                            value=existing_picks.get('total_helper', False) if existing_picks else False,
+                            disabled=total_helper_used or (picks_locked and not existing_picks),
+                            help="Raise or lower the total of an over or under pick. No extra points allotted. NOT available for late submissions."
                         )
                         
-                        if line_helper_used:
+                        if total_helper_used:
                             st.caption("✅ Already used this season")
                     
-                    # Line helper adjustment
-                    line_helper_adjustment = 0
-                    if line_helper and not line_helper_used:
-                        line_helper_adjustment = st.slider(
-                            "Line Helper Adjustment",
+                    with col3:
+                        perfect_prediction_used = has_used_powerup(st.session_state.username, current_year, "perfect_prediction")
+                        perfect_prediction = st.checkbox(
+                            "Perfect Prediction",
+                            value=existing_picks.get('perfect_prediction', False) if existing_picks else False,
+                            disabled=perfect_prediction_used or (picks_locked and not existing_picks),
+                            help="A 4/4 week will result in 8 points (instead of normal 5). NOT available for late submissions."
+                        )
+                        
+                        if perfect_prediction_used:
+                            st.caption("✅ Already used this season")
+                    
+                    # Total helper adjustment
+                    total_helper_adjustment = 0
+                    if total_helper and not total_helper_used:
+                        total_helper_adjustment = st.slider(
+                            "Total Helper Adjustment",
                             min_value=-5,
                             max_value=5,
-                            value=existing_picks.get('line_helper_adjustment', 0) if existing_picks else 0,
+                            value=existing_picks.get('total_helper_adjustment', 0) if existing_picks else 0,
                             step=1,
                             disabled=picks_locked,
                             help="Adjust the Over/Under line by this amount"
                         )
                     
                     # Submit button
+                    if picks_locked:
+                        st.warning("⚠️ **Late Submission Warning**: This submission will be penalized -1 point and scoring specials will be forfeited.")
+                    
                     submitted = st.form_submit_button(
-                        "Submit Picks" if not existing_picks else "Update Picks",
-                        type="primary",
-                        disabled=picks_locked,
+                        "Submit Late Picks (-1 point penalty)" if picks_locked and not existing_picks else "Submit Picks" if not existing_picks else "Update Picks",
+                        type="secondary" if picks_locked else "primary",
                         use_container_width=True
                     )
                     
@@ -278,22 +316,67 @@ def show_picks_form():
                             errors.append("Must select an Under")
                         
                         # Check for conflicts (same game picked multiple times)
-                        picks = [favorite_pick, underdog_pick, over_pick, under_pick]
-                        games = []
-                        for pick in picks:
+                        # Extract game identifiers from each pick
+                        def extract_game_teams(pick):
+                            """Extract the two teams from a pick string to identify the game."""
+                            if not pick:
+                                return None
+                            
+                            # For spread picks: "Team Name (-X.X)" or "Team Name (+X.X)"
+                            if " (" in pick and pick.endswith(")"):
+                                team = pick.split(" (")[0]
+                                # Need to get the other team from the available options
+                                return team
+                            
+                            # For total picks: "Team A vs Team B oX.X" or "Team A vs Team B uX.X"
+                            if " vs " in pick and (" o" in pick or " u" in pick):
+                                teams_part = pick.split(" o")[0].split(" u")[0]  # Remove total info
+                                teams = teams_part.split(" vs ")
+                                if len(teams) == 2:
+                                    return tuple(sorted([teams[0].strip(), teams[1].strip()]))
+                            
+                            return None
+                        
+                        # Get all available games to help identify matchups
+                        picks_data = [favorite_pick, underdog_pick, over_pick, under_pick]
+                        game_matchups = set()
+                        
+                        # For spread picks, we need to find their opposing team
+                        for pick in picks_data:
+                            if pick and " vs " in pick:
+                                teams_part = pick.split(" o")[0].split(" u")[0]
+                                teams = teams_part.split(" vs ")
+                                if len(teams) == 2:
+                                    game_matchups.add(tuple(sorted([teams[0].strip(), teams[1].strip()])))
+                        
+                        # Now check each pick's game
+                        used_games = set()
+                        for pick_type, pick in [("favorite", favorite_pick), ("underdog", underdog_pick), 
+                                               ("over", over_pick), ("under", under_pick)]:
                             if pick:
-                                if " vs " in pick:
-                                    game = pick.split(" vs ")[0] + " vs " + pick.split(" vs ")[1].split(" ")[0]
-                                elif " @ " in pick:
-                                    game = pick.split(" @ ")[0] + " @ " + pick.split(" @ ")[1].split(" ")[0]
-                                else:
-                                    # Extract game from spread pick
-                                    if "(" in pick:
-                                        teams = pick.split(" (")[0]
-                                        game = teams
-                                    else:
-                                        game = pick
-                                games.append(game)
+                                # For spread picks, find which game this team belongs to
+                                if " (" in pick and pick.endswith(")"):
+                                    team = pick.split(" (")[0]
+                                    # Find the game this team is in
+                                    found_game = None
+                                    for game in game_matchups:
+                                        if team in game:
+                                            found_game = game
+                                            break
+                                    if found_game:
+                                        if found_game in used_games:
+                                            errors.append(f"Cannot pick multiple selections from the same game: {' vs '.join(found_game)}")
+                                        else:
+                                            used_games.add(found_game)
+                                
+                                # For total picks
+                                elif " vs " in pick:
+                                    game = extract_game_teams(pick)
+                                    if game:
+                                        if game in used_games:
+                                            errors.append(f"Cannot pick multiple selections from the same game: {' vs '.join(game)}")
+                                        else:
+                                            used_games.add(game)
                         
                         if errors:
                             for error in errors:
@@ -308,9 +391,10 @@ def show_picks_form():
                                     underdog=underdog_pick,
                                     over=over_pick,
                                     under=under_pick,
-                                    perfect_powerup=perfect_powerup,
-                                    line_helper=line_helper,
-                                    line_helper_adjustment=line_helper_adjustment
+                                    super_spread=super_spread,
+                                    total_helper=total_helper,
+                                    total_helper_adjustment=total_helper_adjustment,
+                                    perfect_prediction=perfect_prediction
                                 )
                                 st.success("✅ Picks saved successfully!")
                                 st.rerun()

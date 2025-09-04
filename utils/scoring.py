@@ -2,59 +2,169 @@
 Scoring logic and powerups for the Fantasy Football Pick'em League.
 """
 import pandas as pd
+from datetime import datetime, timedelta
 from utils.storage import load_picks, load_results, load_standings, update_standings
 
 
-def calculate_pick_result(pick_type, pick_value, game_result):
-    """Calculate if a specific pick was correct."""
-    if pick_type == "favorite":
-        # Extract team name and spread from pick_value (e.g., "Chiefs (-3.0)")
-        team_name = pick_value.split(" (")[0]
-        spread = float(pick_value.split("(")[1].replace(")", "").replace("+", ""))
+def calculate_pick_result(pick_type, pick_value, game_result, total_helper_adjustment=0):
+    """Calculate pick result: 'win', 'push', or 'loss'."""
+    try:
+        if pick_type in ["favorite", "underdog"]:
+            # Extract team name and spread from pick_value (e.g., "Chiefs (-3.0)" or "Bills (+7.0)")
+            if " (" not in pick_value:
+                return 'loss'
+            
+            team_name = pick_value.split(" (")[0]
+            spread_str = pick_value.split("(")[1].replace(")", "")
+            spread = float(spread_str.replace("+", ""))
+            
+            # Check if this team covered the spread
+            home_team = game_result["home_team"]
+            away_team = game_result["away_team"]
+            home_score = game_result["home_score"]
+            away_score = game_result["away_score"]
+            
+            if team_name == home_team:
+                adjusted_home_score = home_score + spread
+                if adjusted_home_score > away_score:
+                    return 'win'
+                elif adjusted_home_score == away_score:
+                    return 'push'
+                else:
+                    return 'loss'
+            else:  # Away team
+                adjusted_away_score = away_score + spread
+                if adjusted_away_score > home_score:
+                    return 'win'
+                elif adjusted_away_score == home_score:
+                    return 'push'
+                else:
+                    return 'loss'
+                
+        elif pick_type == "over":
+            # Extract total from pick_value (e.g., "Chiefs vs Bills o51.5")
+            if " o" not in pick_value:
+                return 'loss'
+            total_line = float(pick_value.split(" o")[1])
+            # Apply total helper adjustment if applicable
+            adjusted_line = total_line + total_helper_adjustment
+            total_points = game_result["home_score"] + game_result["away_score"]
+            
+            if total_points > adjusted_line:
+                return 'win'
+            elif total_points == adjusted_line:
+                return 'push'
+            else:
+                return 'loss'
+                
+        elif pick_type == "under":
+            # Extract total from pick_value (e.g., "Chiefs vs Bills u51.5")
+            if " u" not in pick_value:
+                return 'loss'
+            total_line = float(pick_value.split(" u")[1])
+            # Apply total helper adjustment if applicable
+            adjusted_line = total_line + total_helper_adjustment
+            total_points = game_result["home_score"] + game_result["away_score"]
+            
+            if total_points < adjusted_line:
+                return 'win'
+            elif total_points == adjusted_line:
+                return 'push'
+            else:
+                return 'loss'
         
-        # Check if this team covered the spread
+        return 'loss'
+    except Exception:
+        return 'loss'
+
+
+def matches_game(pick_type, pick_value, game_result):
+    """Check if a pick matches a specific game result."""
+    try:
         home_team = game_result["home_team"]
         away_team = game_result["away_team"]
-        home_score = game_result["home_score"]
-        away_score = game_result["away_score"]
         
-        if team_name == home_team:
-            return (home_score + spread) > away_score
-        else:
-            return (away_score + spread) > home_score
+        if pick_type in ["favorite", "underdog"]:
+            # Extract team name from spread pick
+            team_name = pick_value.split(" (")[0]
+            return team_name == home_team or team_name == away_team
+        
+        elif pick_type in ["over", "under"]:
+            # Check if the teams in the total pick match the game
+            if " vs " in pick_value:
+                teams_part = pick_value.split(" o")[0].split(" u")[0]
+                teams = teams_part.split(" vs ")
+                if len(teams) == 2:
+                    team1, team2 = teams[0].strip(), teams[1].strip()
+                    return ((team1 == home_team and team2 == away_team) or 
+                           (team1 == away_team and team2 == home_team))
+        
+        return False
+    except Exception:
+        return False
+
+
+def covered_double_spread(favorite_pick, week_results):
+    """Check if a favorite covered double the original spread."""
+    try:
+        if not favorite_pick or " (" not in favorite_pick:
+            return False
+        
+        team_name = favorite_pick.split(" (")[0]
+        spread_str = favorite_pick.split("(")[1].replace(")", "")
+        original_spread = float(spread_str.replace("+", ""))
+        double_spread = original_spread * 2  # e.g., -5 becomes -10
+        
+        # Find the matching game
+        for _, game_result in week_results.iterrows():
+            home_team = game_result["home_team"]
+            away_team = game_result["away_team"]
+            home_score = game_result["home_score"]
+            away_score = game_result["away_score"]
             
-    elif pick_type == "underdog":
-        # Similar logic but for underdog
-        team_name = pick_value.split(" (+")[0]
-        spread = float(pick_value.split("(+")[1].replace(")", ""))
+            if team_name in [home_team, away_team]:
+                if team_name == home_team:
+                    margin = home_score - away_score
+                else:
+                    margin = away_score - home_score
+                
+                # Check if they covered the double spread
+                return margin >= abs(double_spread)
         
-        home_team = game_result["home_team"]
-        away_team = game_result["away_team"]
-        home_score = game_result["home_score"]
-        away_score = game_result["away_score"]
+        return False
+    except Exception:
+        return False
+
+
+def is_late_submission(pick_row, week, year):
+    """Check if a submission was made after the Thursday deadline."""
+    try:
+        if 'submission_time' not in pick_row or pd.isna(pick_row['submission_time']):
+            return False
         
-        if team_name == home_team:
-            return (home_score + spread) > away_score
-        else:
-            return (away_score + spread) > home_score
-            
-    elif pick_type == "over":
-        # Extract total from pick_value (e.g., "Chiefs vs Bills o51.5")
-        total_line = float(pick_value.split(" o")[1])
-        total_points = game_result["home_score"] + game_result["away_score"]
-        return total_points > total_line
+        submission_time = datetime.fromisoformat(pick_row['submission_time'])
         
-    elif pick_type == "under":
-        # Extract total from pick_value (e.g., "Chiefs vs Bills u51.5")
-        total_line = float(pick_value.split(" u")[1])
-        total_points = game_result["home_score"] + game_result["away_score"]
-        return total_points < total_line
-    
-    return False
+        # Find Thursday of that week - this is simplified, in production you'd want
+        # to get the actual TNF kickoff time for that specific week
+        # For now, assume Thursday 8:15 PM ET is the deadline
+        
+        # Get the first day of the week based on week number
+        # This is a simplification - you'd want more precise date calculation
+        base_date = datetime(year, 9, 5)  # Rough start of NFL season
+        week_start = base_date + timedelta(weeks=week-1)
+        
+        # Find Thursday of that week
+        days_to_thursday = (3 - week_start.weekday()) % 7
+        thursday = week_start + timedelta(days=days_to_thursday)
+        deadline = thursday.replace(hour=20, minute=15)  # 8:15 PM TNF
+        
+        return submission_time > deadline
+    except Exception:
+        return False
 
 
 def score_weekly_picks(username, week, year):
-    """Score a user's picks for a specific week."""
+    """Score a user's picks for a specific week with new rules."""
     picks_df = load_picks()
     results_df = load_results()
     
@@ -66,49 +176,91 @@ def score_weekly_picks(username, week, year):
     ]
     
     if len(user_picks) == 0:
-        return 0, 0, False  # points, correct_picks, perfect_week
+        return 0, 0, False, {}  # points, wins, perfect_week, details
     
     pick_row = user_picks.iloc[0]
     week_results = results_df[(results_df['week'] == week) & (results_df['year'] == year)]
     
     if len(week_results) == 0:
-        return 0, 0, False  # No results available yet
-    
-    correct_picks = 0
-    total_picks = 4
+        return 0, 0, False, {}  # No results available yet
     
     # Score each pick type
     pick_types = ['favorite', 'underdog', 'over', 'under']
+    pick_results = {}
+    points = 0
+    wins = 0
     
+    # Get total helper adjustment if applicable
+    total_helper_adjustment = 0
+    if pick_row.get('total_helper', False):
+        total_helper_adjustment = pick_row.get('total_helper_adjustment', 0)
+    
+    # Score regular picks first
     for pick_type in pick_types:
-        pick_value = pick_row[pick_type]
+        pick_value = pick_row.get(pick_type)
         if pd.isna(pick_value) or pick_value == "":
             continue
             
         # Find matching game result
-        # This is simplified - in a real app, you'd need better game matching logic
+        result = 'loss'  # Default
         for _, game_result in week_results.iterrows():
+            # Simple game matching - in production, you'd want more robust matching
             try:
-                if calculate_pick_result(pick_type, pick_value, game_result):
-                    correct_picks += 1
+                # Check if this pick matches this game
+                if matches_game(pick_type, pick_value, game_result):
+                    adjustment = total_helper_adjustment if pick_type in ['over', 'under'] else 0
+                    result = calculate_pick_result(pick_type, pick_value, game_result, adjustment)
                     break
             except Exception:
-                continue  # Skip if can't parse pick
+                continue
+        
+        pick_results[pick_type] = result
+        
+        # Add points based on result
+        if result == 'win':
+            points += 1
+            wins += 1
+        elif result == 'push':
+            points += 0.5
     
-    # Calculate points
-    points = correct_picks
-    perfect_week = correct_picks == total_picks
+    # Check for perfect week (4 wins)
+    perfect_week = wins == 4
     
-    # Apply powerups
-    if pick_row.get('perfect_powerup', False):
+    # Apply perfect week bonus (unless using scoring specials)
+    if perfect_week and not any([
+        pick_row.get('super_spread', False),
+        pick_row.get('perfect_prediction', False)
+    ]):
+        points += 1  # Perfect week bonus: 5 total points
+    
+    # Check if this is a late submission (forfeits scoring specials)
+    is_late = is_late_submission(pick_row, week, year)
+    
+    # Handle Super Spread special (not available for late submissions)
+    if pick_row.get('super_spread', False) and not is_late:
+        favorite_result = pick_results.get('favorite', 'loss')
+        if favorite_result == 'win':
+            # Check if it covered double the spread
+            if covered_double_spread(pick_row.get('favorite'), week_results):
+                points = points - 1 + 2.5  # Replace the 1 point with 2.5
+        elif favorite_result == 'push':
+            points = points - 0.5 + 1  # Replace 0.5 with 1 point
+        elif favorite_result == 'loss':
+            points = points - 1 + 0  # Replace 1 point with 0
+    
+    # Handle Perfect Prediction special (not available for late submissions)
+    if pick_row.get('perfect_prediction', False) and not is_late:
         if perfect_week:
-            points = 8  # Perfect powerup: 8 points for perfect week
+            points = 8  # Perfect prediction: 8 points for perfect week
         else:
-            points = 0  # Perfect powerup: 0 points if not perfect
-    elif perfect_week:
-        points = 5  # Regular perfect week bonus
+            # Keep normal scoring
+            pass
     
-    return points, correct_picks, perfect_week
+    # Check for late submission penalty
+    if is_late_submission(pick_row, week, year):
+        points = max(0, points - 1)  # Deduct 1 point, minimum 0
+    
+    return points, wins, perfect_week, pick_results
 
 
 def score_all_users_for_week(week, year):
@@ -122,15 +274,16 @@ def score_all_users_for_week(week, year):
     week_scores = []
     
     for username in users:
-        points, correct_picks, perfect_week = score_weekly_picks(username, week, year)
+        points, wins, perfect_week, pick_results = score_weekly_picks(username, week, year)
         
         week_scores.append({
             'username': username,
             'week': week,
             'year': year,
             'points': points,
-            'correct_picks': correct_picks,
-            'perfect_week': perfect_week
+            'wins': wins,
+            'perfect_week': perfect_week,
+            'pick_results': pick_results
         })
         
         # Update standings
@@ -147,10 +300,10 @@ def get_weekly_scoreboard(week, year):
         return pd.DataFrame()
     
     df = pd.DataFrame(week_scores)
-    df = df.sort_values(['points', 'correct_picks'], ascending=[False, False])
+    df = df.sort_values(['points', 'wins'], ascending=[False, False])
     df['rank'] = range(1, len(df) + 1)
     
-    return df[['rank', 'username', 'points', 'correct_picks', 'perfect_week']]
+    return df[['rank', 'username', 'points', 'wins', 'perfect_week']]
 
 
 def get_season_standings(year):
@@ -161,15 +314,15 @@ def get_season_standings(year):
     if len(season_standings) == 0:
         return pd.DataFrame()
     
-    # Sort by total points, then by perfect weeks, then by correct picks
+    # Sort by total points, then by perfect weeks, then by wins
     season_standings = season_standings.sort_values(
-        ['total_points', 'perfect_weeks', 'correct_picks'], 
-        ascending=[False, False, False]
+        ['total_points', 'perfect_weeks'], 
+        ascending=[False, False]
     )
     
     season_standings['rank'] = range(1, len(season_standings) + 1)
     
-    return season_standings[['rank', 'username', 'total_points', 'perfect_weeks', 'correct_picks']]
+    return season_standings[['rank', 'username', 'total_points', 'perfect_weeks']]
 
 
 def get_user_stats(username, year):
@@ -211,9 +364,19 @@ def has_used_powerup(username, year, powerup_type):
         (picks_df['year'] == year)
     ]
     
-    if powerup_type == "perfect_powerup":
-        return user_picks['perfect_powerup'].any()
+    if len(user_picks) == 0:
+        return False
+    
+    if powerup_type == "super_spread":
+        return user_picks['super_spread'].fillna(False).any()
+    elif powerup_type == "total_helper":
+        return user_picks['total_helper'].fillna(False).any()
+    elif powerup_type == "perfect_prediction":
+        return user_picks['perfect_prediction'].fillna(False).any()
+    # Legacy powerups for backward compatibility
+    elif powerup_type == "perfect_powerup":
+        return user_picks.get('perfect_powerup', pd.Series([False])).fillna(False).any()
     elif powerup_type == "line_helper":
-        return user_picks['line_helper'].any()
+        return user_picks.get('line_helper', pd.Series([False])).fillna(False).any()
     
     return False
