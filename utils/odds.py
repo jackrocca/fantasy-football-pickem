@@ -8,6 +8,128 @@ import json
 import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from utils.firestore_client import get_firestore_client
+
+
+def store_raw_api_call(api_type: str, api_parameters: dict, api_results: dict) -> str:
+    """Store raw API call data in Firestore.
+    
+    Args:
+        api_type: The type of API call (e.g., 'GET_odds', 'GET_sports', 'GET_events')
+        api_parameters: Dictionary of parameters passed to the API
+        api_results: Raw JSON response from the API
+        
+    Returns:
+        Document ID of the stored record
+    """
+    try:
+        db = get_firestore_client()
+        
+        # Create the document data
+        doc_data = {
+            "API_TIMESTAMP": datetime.now(),
+            "API_TYPE": api_type,
+            "API_PARAMETERS": api_parameters,
+            "API_RESULTS": api_results
+        }
+        
+        # Store in the 'raw_api_calls' collection
+        doc_ref = db.collection('raw_api_calls').add(doc_data)
+        doc_id = doc_ref[1].id
+        
+        return doc_id
+        
+    except Exception as e:
+        st.error(f"Failed to store raw API call: {str(e)}")
+        return ""
+
+
+def make_odds_api_request(endpoint: str, params: dict) -> tuple[dict, str]:
+    """Make a request to The Odds API and store the raw response.
+    
+    Args:
+        endpoint: The API endpoint (e.g., 'odds', 'sports', 'events')
+        params: Parameters for the API request
+        
+    Returns:
+        Tuple of (api_response_data, document_id)
+    """
+    api_key = get_api_key()
+    
+    if not api_key or api_key == "YOUR_API_KEY":
+        # For mock data, we'll still store it but mark it as mock
+        mock_response = {"mock_data": True, "endpoint": endpoint}
+        doc_id = store_raw_api_call(f"MOCK_{endpoint.upper()}", params, mock_response)
+        return mock_response, doc_id
+    
+    # Construct the full URL
+    base_url = "https://api.the-odds-api.com/v4"
+    url = f"{base_url}/{endpoint}"
+    
+    # Add API key to parameters
+    full_params = {**params, 'api_key': api_key}
+    
+    try:
+        response = requests.get(url, params=full_params, timeout=10)
+        response.raise_for_status()
+        
+        api_results = response.json()
+        
+        # Store the raw API call
+        api_type = f"GET_{endpoint.upper()}"
+        doc_id = store_raw_api_call(api_type, full_params, api_results)
+        
+        return api_results, doc_id
+        
+    except Exception as e:
+        # Store the error as well for debugging
+        error_response = {
+            "error": True,
+            "error_message": str(e),
+            "endpoint": endpoint,
+            "timestamp": datetime.now().isoformat()
+        }
+        doc_id = store_raw_api_call(f"ERROR_{endpoint.upper()}", full_params, error_response)
+        raise e
+
+
+def get_raw_api_calls(api_type: str = None, limit: int = 10) -> list:
+    """Retrieve raw API calls from Firestore.
+    
+    Args:
+        api_type: Filter by specific API type (e.g., 'GET_ODDS')
+        limit: Maximum number of records to return
+        
+    Returns:
+        List of raw API call documents
+    """
+    try:
+        db = get_firestore_client()
+        collection_ref = db.collection('raw_api_calls')
+        
+        # Build query
+        query = collection_ref.order_by('API_TIMESTAMP', direction='DESCENDING').limit(limit)
+        
+        if api_type:
+            query = query.where('API_TYPE', '==', api_type)
+        
+        # Execute query
+        docs = query.stream()
+        
+        results = []
+        for doc in docs:
+            doc_data = doc.to_dict()
+            doc_data['document_id'] = doc.id
+            # Convert timestamp to string for JSON serialization
+            if 'API_TIMESTAMP' in doc_data:
+                doc_data['API_TIMESTAMP'] = doc_data['API_TIMESTAMP'].isoformat()
+            results.append(doc_data)
+        
+        return results
+        
+    except Exception as e:
+        st.error(f"Failed to retrieve raw API calls: {str(e)}")
+        return []
 
 
 def get_api_key():
@@ -28,6 +150,151 @@ def get_current_week_year():
     # Import here to avoid circular imports
     from utils.storage import get_current_week
     return get_current_week()
+
+
+# Odds API Endpoint Wrappers
+def fetch_sports_from_api() -> tuple[dict, str]:
+    """Fetch available sports from The Odds API.
+    
+    Returns:
+        Tuple of (sports_data, document_id)
+    """
+    params = {}
+    return make_odds_api_request("sports", params)
+
+
+def fetch_odds_from_api(sport: str = "americanfootball_nfl", 
+                       regions: str = "us", 
+                       markets: str = "h2h,spreads,totals",
+                       odds_format: str = "american",
+                       date_format: str = "iso") -> tuple[dict, str]:
+    """Fetch odds for a specific sport from The Odds API.
+    
+    Args:
+        sport: Sport key (default: americanfootball_nfl)
+        regions: Regions to get odds for (default: us)
+        markets: Markets to include (default: h2h,spreads,totals)
+        odds_format: Format for odds (default: american)
+        date_format: Format for dates (default: iso)
+        
+    Returns:
+        Tuple of (odds_data, document_id)
+    """
+    params = {
+        'regions': regions,
+        'markets': markets,
+        'oddsFormat': odds_format,
+        'dateFormat': date_format
+    }
+    endpoint = f"sports/{sport}/odds"
+    return make_odds_api_request(endpoint, params)
+
+
+def fetch_events_from_api(sport: str = "americanfootball_nfl",
+                         date_format: str = "iso") -> tuple[dict, str]:
+    """Fetch events for a specific sport from The Odds API.
+    
+    Args:
+        sport: Sport key (default: americanfootball_nfl)
+        date_format: Format for dates (default: iso)
+        
+    Returns:
+        Tuple of (events_data, document_id)
+    """
+    params = {
+        'dateFormat': date_format
+    }
+    endpoint = f"sports/{sport}/events"
+    return make_odds_api_request(endpoint, params)
+
+
+def fetch_scores_from_api(sport: str = "americanfootball_nfl",
+                         days_from: int = 3,
+                         date_format: str = "iso") -> tuple[dict, str]:
+    """Fetch scores for a specific sport from The Odds API.
+    
+    Args:
+        sport: Sport key (default: americanfootball_nfl)
+        days_from: Number of days from now to get scores (default: 3)
+        date_format: Format for dates (default: iso)
+        
+    Returns:
+        Tuple of (scores_data, document_id)
+    """
+    params = {
+        'daysFrom': days_from,
+        'dateFormat': date_format
+    }
+    endpoint = f"sports/{sport}/scores"
+    return make_odds_api_request(endpoint, params)
+
+
+def fetch_event_odds_from_api(sport: str, event_id: str,
+                             regions: str = "us",
+                             markets: str = "h2h,spreads,totals",
+                             odds_format: str = "american",
+                             date_format: str = "iso") -> tuple[dict, str]:
+    """Fetch odds for a specific event from The Odds API.
+    
+    Args:
+        sport: Sport key
+        event_id: Event ID
+        regions: Regions to get odds for (default: us)
+        markets: Markets to include (default: h2h,spreads,totals)
+        odds_format: Format for odds (default: american)
+        date_format: Format for dates (default: iso)
+        
+    Returns:
+        Tuple of (event_odds_data, document_id)
+    """
+    params = {
+        'regions': regions,
+        'markets': markets,
+        'oddsFormat': odds_format,
+        'dateFormat': date_format
+    }
+    endpoint = f"sports/{sport}/events/{event_id}/odds"
+    return make_odds_api_request(endpoint, params)
+
+
+def fetch_event_markets_from_api(sport: str, event_id: str,
+                                regions: str = "us",
+                                odds_format: str = "american",
+                                date_format: str = "iso") -> tuple[dict, str]:
+    """Fetch available markets for a specific event from The Odds API.
+    
+    Args:
+        sport: Sport key
+        event_id: Event ID
+        regions: Regions to get markets for (default: us)
+        odds_format: Format for odds (default: american)
+        date_format: Format for dates (default: iso)
+        
+    Returns:
+        Tuple of (markets_data, document_id)
+    """
+    params = {
+        'regions': regions,
+        'oddsFormat': odds_format,
+        'dateFormat': date_format
+    }
+    endpoint = f"sports/{sport}/events/{event_id}/markets"
+    return make_odds_api_request(endpoint, params)
+
+
+def fetch_participants_from_api(sport: str, event_id: str) -> tuple[dict, str]:
+    """Fetch participants for a specific event from The Odds API.
+    
+    Args:
+        sport: Sport key
+        event_id: Event ID
+        
+    Returns:
+        Tuple of (participants_data, document_id)
+    """
+    params = {}
+    endpoint = f"sports/{sport}/events/{event_id}/participants"
+    return make_odds_api_request(endpoint, params)
 
 
 def get_current_week_date_range():
@@ -171,31 +438,17 @@ def fetch_nfl_odds(force_refresh=False):
         if cached_odds is not None:
             return cached_odds
     
-    # If no cache or force refresh, fetch from API
-    api_key = get_api_key()
-    
-    if not api_key or api_key == "YOUR_API_KEY":
-        # Return filtered mock data if no API key
-        mock_data = get_mock_odds()
-        filtered_mock = filter_games_for_current_week(mock_data)
-        save_odds_to_cache(current_week, current_year, filtered_mock)
-        return filtered_mock
-    
-    url = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds/"
-    
-    params = {
-        'api_key': api_key,
-        'regions': 'us',
-        'markets': 'h2h,spreads,totals',
-        'oddsFormat': 'american',
-        'dateFormat': 'iso'
-    }
-    
+    # If no cache or force refresh, fetch from API using new raw storage system
     try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
+        # Use the new API wrapper that stores raw data
+        odds_data, doc_id = fetch_odds_from_api()
         
-        odds_data = response.json()
+        # If we got mock data, handle it differently
+        if isinstance(odds_data, dict) and odds_data.get("mock_data"):
+            mock_data = get_mock_odds()
+            filtered_mock = filter_games_for_current_week(mock_data)
+            save_odds_to_cache(current_week, current_year, filtered_mock)
+            return filtered_mock
         
         # Filter to only include current week's games
         filtered_odds = filter_games_for_current_week(odds_data)
@@ -203,11 +456,15 @@ def fetch_nfl_odds(force_refresh=False):
         # Save filtered data to cache
         save_odds_to_cache(current_week, current_year, filtered_odds)
         
+        # Log the successful API call with raw storage
+        if doc_id:
+            st.info(f"✅ API call stored with ID: {doc_id}")
+        
         return filtered_odds
         
     except Exception as e:
+        # Fallback to mock data if API fails
         mock_data = get_mock_odds()
-        # Filter mock data to current week as well
         filtered_mock = filter_games_for_current_week(mock_data)
         save_odds_to_cache(current_week, current_year, filtered_mock)
         return filtered_mock

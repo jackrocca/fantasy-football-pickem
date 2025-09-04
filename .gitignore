@@ -62,3 +62,5 @@ Thumbs.db
 # (uncomment if you don't want to commit data files)
 # data/*.csv
 .venv/
+google-keys.json
+.cursor/
