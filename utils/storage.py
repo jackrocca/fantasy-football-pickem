@@ -5,6 +5,7 @@ import pandas as pd
 import os
 from datetime import datetime, timedelta
 import streamlit as st
+from zoneinfo import ZoneInfo
 
 
 def get_data_path(filename):
@@ -44,8 +45,9 @@ def save_picks(username, week, year, favorite, underdog, over, under,
     # Remove existing picks for this user/week/year
     df = df[~((df['username'] == username) & (df['week'] == week) & (df['year'] == year))]
     
-    # Determine submission time for deadline checking
-    current_time = datetime.now()
+    # Determine submission time for deadline checking (PST/PDT)
+    pst_tz = ZoneInfo("America/Los_Angeles")
+    current_time = datetime.now(pst_tz)
     submission_time = current_time.isoformat()
     
     # Add new pick
@@ -134,26 +136,32 @@ def update_standings(username, year, points_earned, perfect_week=False):
 
 
 def get_current_week():
-    """Get the current NFL week based on date."""
+    """Get the current NFL week based on PST/PDT date."""
     # NFL season typically starts first Thursday after Labor Day
     # This is a simplified version - you might want to use a more accurate calculation
-    today = datetime.now()
+    pst_tz = ZoneInfo("America/Los_Angeles")
+    today = datetime.now(pst_tz)
     
     # Assume week 1 starts on September 5th (adjust as needed)
     if today.month < 9:
         return 1, today.year
     elif today.month > 2:
-        week = min(((today - datetime(today.year, 9, 5)).days // 7) + 1, 18)
+        # Use timezone-aware datetime for comparison
+        week_1_start = datetime(today.year, 9, 5, tzinfo=pst_tz)
+        week = min(((today - week_1_start).days // 7) + 1, 18)
         return max(week, 1), today.year
     else:
         # February/March - previous season
-        week = min(((today - datetime(today.year - 1, 9, 5)).days // 7) + 1, 18)
+        week_1_start = datetime(today.year - 1, 9, 5, tzinfo=pst_tz)
+        week = min(((today - week_1_start).days // 7) + 1, 18)
         return max(week, 1), today.year - 1
 
 
 def is_thursday_or_later():
-    """Check if it's Thursday or later (picks should be locked)."""
-    return datetime.now().weekday() >= 3  # Thursday = 3
+    """Check if it's Thursday or later in PST/PDT (picks should be locked)."""
+    pst_tz = ZoneInfo("America/Los_Angeles")
+    pst_now = datetime.now(pst_tz)
+    return pst_now.weekday() >= 3  # Thursday = 3
 
 
 def get_user_picks(username, week, year):

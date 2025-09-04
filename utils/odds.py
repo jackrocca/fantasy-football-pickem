@@ -7,6 +7,7 @@ import pandas as pd
 import json
 import os
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 
 def get_api_key():
@@ -36,7 +37,8 @@ def get_current_week_date_range():
     - If it's Wednesday or earlier, look ahead to the upcoming Thursday
     - If it's Thursday or later, use the current week's Thursday
     """
-    today = datetime.now()
+    pst_tz = ZoneInfo("America/Los_Angeles")
+    today = datetime.now(pst_tz)
     
     # Find the next Thursday (or current Thursday if today is Thursday)
     current_weekday = today.weekday()  # Monday=0, Tuesday=1, ..., Sunday=6
@@ -74,10 +76,11 @@ def filter_games_for_current_week(odds_data):
             continue
             
         try:
-            # Parse the ISO datetime from the API
-            game_time = datetime.fromisoformat(commence_time_str.replace('Z', '+00:00'))
-            # Convert to local time for comparison
-            game_time_local = game_time.replace(tzinfo=None)
+            # Parse the ISO datetime from the API (UTC)
+            game_time_utc = datetime.fromisoformat(commence_time_str.replace('Z', '+00:00'))
+            # Convert to PST/PDT for comparison
+            pst_tz = ZoneInfo("America/Los_Angeles")
+            game_time_local = game_time_utc.astimezone(pst_tz)
             
             # Check if game falls within current week range
             if week_start <= game_time_local <= week_end:
@@ -112,7 +115,12 @@ def load_cached_odds(week, year):
             
             # Check if cache is still fresh (within 24 hours)
             cache_datetime = datetime.fromisoformat(cache_date)
-            if datetime.now() - cache_datetime < timedelta(hours=24):
+            pst_tz = ZoneInfo("America/Los_Angeles")
+            current_time = datetime.now(pst_tz)
+            # Make cache_datetime timezone-aware if it isn't already
+            if cache_datetime.tzinfo is None:
+                cache_datetime = cache_datetime.replace(tzinfo=pst_tz)
+            if current_time - cache_datetime < timedelta(hours=24):
                 return odds_data
             else:
                 return None
@@ -138,10 +146,11 @@ def save_odds_to_cache(week, year, odds_data):
         cache_df = cache_df[~((cache_df['week'] == week) & (cache_df['year'] == year))]
         
         # Add new cache entry
+        pst_tz = ZoneInfo("America/Los_Angeles")
         new_cache = pd.DataFrame([{
             'week': week,
             'year': year,
-            'cache_date': datetime.now().isoformat(),
+            'cache_date': datetime.now(pst_tz).isoformat(),
             'odds_data': json.dumps(odds_data)
         }])
         
@@ -206,19 +215,21 @@ def fetch_nfl_odds(force_refresh=False):
 
 def get_mock_odds():
     """Return mock NFL odds data for testing."""
-    # Generate dates for the current week (Thursday to Monday)
-    today = datetime.now()
+    # Generate dates for the current week (Thursday to Monday) in PST/PDT
+    pst_tz = ZoneInfo("America/Los_Angeles")
+    today = datetime.now(pst_tz)
     days_since_thursday = (today.weekday() - 3) % 7
     if days_since_thursday == 0:
         week_start = today
     else:
         week_start = today - timedelta(days=days_since_thursday)
     
-    # Create mock games for Thursday, Sunday, and Monday
-    thursday_game = week_start.replace(hour=20, minute=15).strftime("%Y-%m-%dT%H:%M:%SZ")
-    sunday_game1 = (week_start + timedelta(days=3)).replace(hour=13, minute=0).strftime("%Y-%m-%dT%H:%M:%SZ")
-    sunday_game2 = (week_start + timedelta(days=3)).replace(hour=16, minute=25).strftime("%Y-%m-%dT%H:%M:%SZ")
-    monday_game = (week_start + timedelta(days=4)).replace(hour=20, minute=15).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Create mock games for Thursday, Sunday, and Monday (convert to UTC for API consistency)
+    utc_tz = ZoneInfo("UTC")
+    thursday_game = week_start.replace(hour=20, minute=15).astimezone(utc_tz).strftime("%Y-%m-%dT%H:%M:%SZ")
+    sunday_game1 = (week_start + timedelta(days=3)).replace(hour=13, minute=0).astimezone(utc_tz).strftime("%Y-%m-%dT%H:%M:%SZ")
+    sunday_game2 = (week_start + timedelta(days=3)).replace(hour=16, minute=25).astimezone(utc_tz).strftime("%Y-%m-%dT%H:%M:%SZ")
+    monday_game = (week_start + timedelta(days=4)).replace(hour=20, minute=15).astimezone(utc_tz).strftime("%Y-%m-%dT%H:%M:%SZ")
     
     return [
         {

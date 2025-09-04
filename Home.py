@@ -7,6 +7,7 @@ import pandas as pd
 import sys
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 # Add utils to path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'utils'))
@@ -555,7 +556,8 @@ def show_league_settings():
     with col3:
         # System info
         st.write("**System Info**")
-        st.write(f"App started: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        pst_tz = ZoneInfo("America/Los_Angeles")
+        st.write(f"App started: {datetime.now(pst_tz).strftime('%Y-%m-%d %H:%M PST')}")
         st.write(f"Total users: {len(get_all_users())}")
         
         picks_df = load_picks()
