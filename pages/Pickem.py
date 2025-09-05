@@ -263,7 +263,7 @@ def show_picks_form():
                                 fav_default_index = 0
                         
                         favorite_pick = st.selectbox(
-                            "Select a Favorite (team getting points)",
+                            "Select a Favorite",
                             [""] + picks_options["favorites"],
                             index=fav_default_index,
                             disabled=picks_locked,
@@ -282,7 +282,7 @@ def show_picks_form():
                                 und_default_index = 0
                         
                         underdog_pick = st.selectbox(
-                            "Select an Underdog (team giving points)",
+                            "Select an Underdog",
                             [""] + picks_options["underdogs"],
                             index=und_default_index,
                             disabled=picks_locked,
